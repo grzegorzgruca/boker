@@ -1,0 +1,5 @@
+{
+  "name": "Booker",
+  "description": "A specialized Spaced Repetition System for language learning with automatic grammar-fluency time allocation, calendar view, and repetition scheduling.",
+  "requestFramePermissions": []
+}
