@@ -1,22 +1,30 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Filter } from 'lucide-react';
 import { Task, Language, TagType } from '../types';
-import { getStartOfDay, getProjectedDates, addDays } from '../utils';
+import { getStartOfDay, getProjectedDates } from '../utils';
 
 interface CalendarViewProps {
   tasks: Task[];
+  currentDate: number; // The "Today" timestamp (real or simulated)
 }
 
 const DAYS_OF_WEEK = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Ndz'];
 const MONTHS = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
 
-export const CalendarView: React.FC<CalendarViewProps> = ({ tasks }) => {
-  const [currentDate, setCurrentDate] = useState(new Date());
+export const CalendarView: React.FC<CalendarViewProps> = ({ tasks, currentDate: todayTimestamp }) => {
+  // Initialize viewDate based on the passed todayTimestamp
+  const [viewDate, setViewDate] = useState(new Date(todayTimestamp));
+  
+  // Sync view when simulation changes significantly (e.g. jumping months), optional
+  useEffect(() => {
+    setViewDate(new Date(todayTimestamp));
+  }, [todayTimestamp]);
+
   const [filterLang, setFilterLang] = useState<Language | 'All'>('All');
   const [filterTag, setFilterTag] = useState<TagType | 'All'>('All');
 
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
 
   // Calendar Logic
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -25,11 +33,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ tasks }) => {
   const startDayIndex = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
 
   const prevMonthDays = () => {
-    setCurrentDate(new Date(year, month - 1, 1));
+    setViewDate(new Date(year, month - 1, 1));
   };
 
   const nextMonthDays = () => {
-    setCurrentDate(new Date(year, month + 1, 1));
+    setViewDate(new Date(year, month + 1, 1));
   };
 
   // Filter Tasks
@@ -74,16 +82,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ tasks }) => {
       } else {
         // Day Cell
         const day = i - startDayIndex + 1;
-        const dateTimestamp = new Date(year, month, day).getTime(); // Note: This might be local time 00:00
-        // normalize to utils.getStartOfDay to match tasks
-        const normalizedTs = getStartOfDay(new Date(year, month, day));
+        // Construct date safely
+        const cellDate = new Date(year, month, day);
+        const cellTimestamp = getStartOfDay(cellDate);
         
-        const dayTasks = tasksByDate[normalizedTs] || [];
-        const isToday = normalizedTs === getStartOfDay();
+        const dayTasks = tasksByDate[cellTimestamp] || [];
+        const isToday = cellTimestamp === todayTimestamp;
 
         cells.push(
-          <div key={`day-${day}`} className={`border border-gray-100 min-h-[100px] p-1 flex flex-col bg-white ${isToday ? 'ring-2 ring-indigo-500 ring-inset' : ''}`}>
-            <div className={`text-xs font-semibold mb-1 text-center ${isToday ? 'text-indigo-600' : 'text-gray-400'}`}>
+          <div key={`day-${day}`} className={`border border-gray-100 min-h-[100px] p-1 flex flex-col bg-white ${isToday ? 'ring-2 ring-indigo-500 ring-inset relative' : ''}`}>
+            {isToday && (
+              <div className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" title="Symulowane 'Dzisiaj'"></div>
+            )}
+            <div className={`text-xs font-semibold mb-1 text-center ${isToday ? 'text-indigo-600 font-bold' : 'text-gray-400'}`}>
               {day}
             </div>
             <div className="flex-1 flex flex-col gap-1 overflow-y-auto max-h-[120px]">
@@ -159,6 +170,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ tasks }) => {
       <div className="mt-4 flex gap-4 text-xs text-gray-500 justify-center">
          <div className="flex items-center gap-1"><div className="w-3 h-3 bg-indigo-50 border border-indigo-200 rounded"></div> Zadanie aktywne</div>
          <div className="flex items-center gap-1"><div className="w-3 h-3 bg-gray-50 border border-gray-200 border-dashed rounded"></div> Prognoza</div>
+         <div className="flex items-center gap-1"><div className="w-2 h-2 bg-red-500 rounded-full"></div> Dzisiaj (Symulacja)</div>
       </div>
     </div>
   );

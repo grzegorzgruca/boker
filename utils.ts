@@ -2,8 +2,9 @@ import { TagType, Task } from './types';
 
 // --- Date Helpers ---
 
-export const getStartOfDay = (date: Date = new Date()): number => {
+export const getStartOfDay = (date: Date | number = new Date()): number => {
   const d = new Date(date);
+  if (isNaN(d.getTime())) return new Date().setHours(0,0,0,0); // Safety fallback
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 };
@@ -14,11 +15,16 @@ export const addDays = (timestamp: number, days: number): number => {
   return d.getTime();
 };
 
-export const formatDate = (timestamp: number): string => {
-  const d = new Date(timestamp);
-  const today = getStartOfDay();
+export const formatDate = (timestamp: number, todayTimestamp?: number): string => {
+  if (!timestamp || isNaN(timestamp)) return 'Błąd daty';
+  
+  const today = todayTimestamp || getStartOfDay();
   const tomorrow = addDays(today, 1);
   const dayAfter = addDays(today, 2);
+
+  // Safety check for invalid dates
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return 'Nieznana data';
 
   if (timestamp === today) return 'Dzisiaj';
   if (timestamp === tomorrow) return 'Jutro';
@@ -40,11 +46,6 @@ export const calculateTimeSplit = (minutes: number, tag: TagType) => {
 
 // Returns the interval (in days) to add based on the COMPLETED stage
 // Goal Pattern (cumulative from Day 0): 1, 2, 7, 14, 25
-// Stage 0 (Done) -> Need +1 (Target Day 1)
-// Stage 1 (Done) -> Need +1 (Target Day 2)
-// Stage 2 (Done) -> Need +5 (Target Day 7)
-// Stage 3 (Done) -> Need +7 (Target Day 14)
-// Stage 4 (Done) -> Need +11 (Target Day 25)
 export const getIntervalForStage = (stage: number): number | null => {
   switch (stage) {
     case 0: return 1; 
@@ -60,7 +61,8 @@ export const getNextDueDate = (currentStage: number, lastCompletedDate: number):
   const interval = getIntervalForStage(currentStage);
   if (interval === null) return null;
   
-  const now = getStartOfDay(new Date(lastCompletedDate));
+  // Ensure we work with start of day to avoid time drift
+  const now = getStartOfDay(lastCompletedDate);
   return addDays(now, interval);
 };
 
@@ -69,7 +71,7 @@ export const getNextDueDate = (currentStage: number, lastCompletedDate: number):
 export const getProjectedDates = (task: Task) => {
   const projections: { date: number; stage: number; type: 'actual' | 'projected' }[] = [];
   
-  if (task.isArchived) return projections;
+  if (task.isArchived || !task.nextDueDate) return projections;
 
   // 1. Current actual due date
   let currentBaseDate = task.nextDueDate;
@@ -82,13 +84,14 @@ export const getProjectedDates = (task: Task) => {
   });
 
   // 2. Project future dates assuming perfect adherence
-  // We simulate completing the task on the due date
-  // Loop until stage 5 (The final 25th day rep)
-  while (currentStage < 5) {
+  // Added loop safety limit
+  let safetyCounter = 0;
+  while (currentStage < 5 && safetyCounter < 10) {
+    safetyCounter++;
     const nextInterval = getIntervalForStage(currentStage);
     if (nextInterval === null) break;
 
-    // Simulate completion on the due date, so next due date is current + interval
+    // Simulate completion on the due date
     currentBaseDate = addDays(currentBaseDate, nextInterval);
     currentStage++;
 
@@ -107,12 +110,10 @@ export const getProjectedDates = (task: Task) => {
 export const saveToCookie = (key: string, data: any) => {
   try {
     const json = JSON.stringify(data);
-    // Encode value to handle special characters
     const encoded = encodeURIComponent(json);
-    // Set cookie for 1 year
     document.cookie = `${key}=${encoded}; path=/; max-age=31536000; SameSite=Strict`;
   } catch (e) {
-    console.error("Cookie save failed (likely too large)", e);
+    console.error("Cookie save failed", e);
   }
 };
 
@@ -149,15 +150,14 @@ export const sendNotification = (title: string, body: string) => {
   if (Notification.permission === 'granted') {
     new Notification(title, {
       body: body,
-      icon: 'https://cdn-icons-png.flaticon.com/512/2996/2996918.png' // Generic book/learning icon
+      icon: 'https://cdn-icons-png.flaticon.com/512/2996/2996918.png'
     });
   }
 };
 
-export const getDailyStats = (tasks: Task[]) => {
-  const today = getStartOfDay();
-  // Filter for tasks strictly today or overdue
-  const todoTasks = tasks.filter(t => !t.isArchived && t.nextDueDate <= today);
+export const getDailyStats = (tasks: Task[], todayTimestamp: number) => {
+  // Filter for tasks strictly today or overdue based on the provided reference date
+  const todoTasks = tasks.filter(t => !t.isArchived && t.nextDueDate <= todayTimestamp);
   
   let totalMinutes = 0;
   todoTasks.forEach(t => totalMinutes += t.originalDuration);

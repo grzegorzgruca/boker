@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Download, Upload, Archive as ArchiveIcon, Calendar as CalendarIcon, Clock, BookOpen, Beaker } from 'lucide-react';
+import { Plus, Download, Upload, Archive as ArchiveIcon, Calendar as CalendarIcon, Clock, BookOpen } from 'lucide-react';
 import { Task, TagType, TimeOption, Language } from './types';
-import { getStartOfDay, formatDate, getNextDueDate, saveToCookie, loadFromCookie, getDailyStats, sendNotification } from './utils';
+import { getStartOfDay, formatDate, getNextDueDate, saveToCookie, loadFromCookie, getDailyStats, sendNotification, addDays } from './utils';
 import { TaskCard } from './components/TaskCard';
 import { CalendarView } from './components/CalendarView';
 import { TestingView } from './components/TestingView';
@@ -22,6 +22,9 @@ function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [view, setView] = useState<'schedule' | 'calendar' | 'archive' | 'data' | 'test'>('schedule');
   
+  // Simulation State
+  const [simulatedOffset, setSimulatedOffset] = useState(0);
+
   // Form State
   const [topic, setTopic] = useState('');
   const [description, setDescription] = useState('');
@@ -31,6 +34,12 @@ function App() {
   
   // Data Import/Export State
   const [ioText, setIoText] = useState('');
+
+  // --- Derived Global Time ---
+  // This is the source of truth for "Today" throughout the app
+  const globalToday = useMemo(() => {
+    return addDays(getStartOfDay(), simulatedOffset);
+  }, [simulatedOffset]);
 
   // --- Effects ---
   // Load from LocalStorage or Cookie on mount
@@ -64,32 +73,31 @@ function App() {
     const checkAndNotify = () => {
       if (Notification.permission !== 'granted') return;
 
-      const todayStr = new Date().toDateString(); // e.g. "Fri Nov 29 2024"
+      const dateStr = new Date(globalToday).toDateString(); 
       const lastNotified = localStorage.getItem('booker-last-notification');
 
-      // Check if we already notified today
-      if (lastNotified === todayStr) return;
+      // Check if we already notified for this specific (virtual) date
+      if (lastNotified === dateStr) return;
 
-      const stats = getDailyStats(tasks);
+      const stats = getDailyStats(tasks, globalToday);
       if (stats.hasTasks) {
          sendNotification(
             "Booker: Plan na dziś",
             `📅 Masz dziś ${stats.count} zadań do zrobienia.\n⏱️ Szacowany czas: ${stats.timeString}`
          );
          // Mark as notified for today
-         localStorage.setItem('booker-last-notification', todayStr);
+         localStorage.setItem('booker-last-notification', dateStr);
       }
     };
 
-    // Check immediately on load (if new day)
+    // Check immediately on load or when simulation changes
     checkAndNotify();
 
-    // Set up an interval to check periodically (e.g. if the tab is left open overnight)
-    // Checking every hour is sufficient
+    // Set up an interval to check periodically
     const intervalId = setInterval(checkAndNotify, 1000 * 60 * 60);
 
     return () => clearInterval(intervalId);
-  }, [tasks]);
+  }, [tasks, globalToday]);
 
 
   // --- Handlers ---
@@ -98,11 +106,8 @@ function App() {
     e.preventDefault();
     if (!topic.trim()) return;
 
-    // Based on prompt: "wpisany dziś - jest zaliczony"
-    // So we create it, mark it as Stage 0 (Done), and schedule next rep (Stage 1).
-    
-    const today = getStartOfDay();
-    const nextDue = getNextDueDate(0, today); // Get date for Stage 1
+    // We use globalToday as the creation reference
+    const nextDue = getNextDueDate(0, globalToday); // Get date for Stage 1
 
     const newTask: Task = {
       id: crypto.randomUUID(),
@@ -111,8 +116,8 @@ function App() {
       tag: selectedTag,
       language: selectedLanguage,
       originalDuration: selectedTime,
-      createdAt: Date.now(),
-      nextDueDate: nextDue || today, // Fallback if logic fails, though 0 always has next
+      createdAt: globalToday,
+      nextDueDate: nextDue || globalToday, // Fallback
       stage: 1, // Moving to stage 1 immediately as "input = done"
       isArchived: false,
     };
@@ -126,7 +131,8 @@ function App() {
     setTasks(prev => prev.map(t => {
       if (t.id !== id) return t;
 
-      const nextDate = getNextDueDate(t.stage, Date.now());
+      // We use globalToday as the "completion date"
+      const nextDate = getNextDueDate(t.stage, globalToday);
       const isFinished = nextDate === null;
 
       return {
@@ -155,8 +161,6 @@ function App() {
 
   // --- Derived State (Computations) ---
 
-  const todayTimestamp = getStartOfDay();
-
   // Active Tasks (Scheduled)
   const activeTasks = useMemo(() => {
     return tasks
@@ -168,39 +172,33 @@ function App() {
   const groupedTasks = useMemo(() => {
     const groups: Record<number, Task[]> = {};
     activeTasks.forEach(t => {
-      // If overdue, show in Today
-      const key = t.nextDueDate < todayTimestamp ? todayTimestamp : t.nextDueDate;
+      // If overdue relative to simulation time, show in Today
+      const key = t.nextDueDate < globalToday ? globalToday : t.nextDueDate;
       if (!groups[key]) groups[key] = [];
       groups[key].push(t);
     });
     return groups;
-  }, [activeTasks, todayTimestamp]);
+  }, [activeTasks, globalToday]);
 
   // Today's Stats
   const todayStats = useMemo(() => {
-    // We count tasks scheduled for today (or overdue)
-    const todayTasks = groupedTasks[todayTimestamp] || [];
-    
-    let totalMinutes = 0;
-    
-    todayTasks.forEach(t => {
-       totalMinutes += t.originalDuration;
-    });
-
-    const hours = Math.floor(totalMinutes / 60);
-    const mins = totalMinutes % 60;
-
-    return { count: todayTasks.length, totalMinutes, formatted: `${hours}h ${mins}m` };
-  }, [groupedTasks, todayTimestamp]);
+    return getDailyStats(tasks, globalToday);
+  }, [tasks, globalToday]);
 
   // Archived Tasks
   const archivedTasks = useMemo(() => tasks.filter(t => t.isArchived).sort((a, b) => b.createdAt - a.createdAt), [tasks]);
-
 
   // --- Render ---
 
   return (
     <div className="min-h-screen pb-12 bg-[#F8FAFC]">
+      {/* Simulation Banner */}
+      {simulatedOffset > 0 && (
+        <div className="bg-amber-100 text-amber-900 text-xs text-center py-1 font-bold border-b border-amber-200">
+           ⚠️ Tryb symulacji: {new Date(globalToday).toLocaleDateString('pl-PL')} (+{simulatedOffset} dni)
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
         <div className="max-w-4xl mx-auto px-4 py-4 flex flex-col sm:flex-row gap-4 justify-between items-center">
@@ -344,7 +342,11 @@ function App() {
             <section className="bg-gradient-to-r from-gray-900 to-indigo-900 rounded-2xl p-6 text-white shadow-lg flex justify-between items-center">
               <div>
                 <h3 className="text-indigo-200 font-medium text-sm uppercase tracking-wider mb-1">Dzisiejszy plan</h3>
-                <div className="text-3xl font-bold">{todayStats.totalMinutes > 0 ? todayStats.formatted : 'Wolne'}</div>
+                {todayStats.hasTasks ? (
+                  <div className="text-3xl font-bold">{todayStats.timeString}</div>
+                ) : (
+                  <div className="text-3xl font-bold">Wolne</div>
+                )}
               </div>
               <div className="text-right">
                 <div className="text-indigo-200 text-sm">Do powtórzenia</div>
@@ -356,7 +358,8 @@ function App() {
             <section className="space-y-6">
               {Object.keys(groupedTasks).map((dateKey) => {
                 const ts = Number(dateKey);
-                const dateLabel = formatDate(ts);
+                // We pass globalToday to formatDate to make sure "Dzisiaj" matches the simulation
+                const dateLabel = formatDate(ts, globalToday);
                 const isToday = dateLabel === 'Dzisiaj';
                 
                 return (
@@ -369,8 +372,8 @@ function App() {
                         <TaskCard 
                           key={task.id} 
                           task={task} 
-                          onComplete={isToday || ts < todayTimestamp ? handleCompleteTask : undefined}
-                          readonly={!isToday && ts > todayTimestamp}
+                          onComplete={isToday || ts < globalToday ? handleCompleteTask : undefined}
+                          readonly={!isToday && ts > globalToday}
                         />
                       ))}
                     </div>
@@ -392,7 +395,7 @@ function App() {
         {/* VIEW: CALENDAR */}
         {view === 'calendar' && (
           <section>
-            <CalendarView tasks={tasks} />
+            <CalendarView tasks={tasks} currentDate={globalToday} />
           </section>
         )}
 
@@ -450,7 +453,12 @@ function App() {
         {/* VIEW: TEST */}
         {view === 'test' && (
           <section>
-            <TestingView tasks={tasks} />
+            <TestingView 
+              tasks={tasks} 
+              currentDate={globalToday}
+              onAdvanceDay={() => setSimulatedOffset(prev => prev + 1)}
+              onResetDate={() => setSimulatedOffset(0)}
+            />
           </section>
         )}
 

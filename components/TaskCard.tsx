@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Task, TagType, Language } from '../types';
 import { calculateTimeSplit } from '../utils';
-import { Check, Clock, GraduationCap, MessageCircle, Activity, Globe, ChevronDown, ChevronUp } from 'lucide-react';
+import { Check, Clock, GraduationCap, MessageCircle, Activity, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface TaskCardProps {
   task: Task;
